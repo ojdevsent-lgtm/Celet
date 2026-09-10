@@ -1,20 +1,52 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function businessId() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.businessId; }
-    function sameBusiness(id) { return signedIn() && businessId() == id; }
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsBusiness(id) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/businesses/$(id))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.businessId == id
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner'
+        && get(/databases/$(database)/documents/businesses/$(id)).data.ownerId == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.businessId == uid
+        && request.resource.data.role == 'owner'
+        && request.resource.data.email == request.auth.token.email;
+
+      allow read: if signedIn() && request.auth.uid == uid;
+
+      // The client may update workspace metadata, but cannot move the account
+      // to another business or change its authorization role.
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && resource.data.businessId == request.resource.data.businessId
+        && resource.data.role == request.resource.data.role
+        && resource.data.email == request.resource.data.email;
+
+      allow delete: if false;
+    }
 
     match /businesses/{id} {
-      allow read: if sameBusiness(id);
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if sameBusiness(id);
-      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
-      match /{collection}/{document} { allow read, write: if sameBusiness(id); }
-    }
-    match /users/{uid} {
-      allow read, create, update: if signedIn() && request.auth.uid == uid;
-      allow delete: if false;
+      allow create: if signedIn()
+        && id == request.auth.uid
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow read, update, delete: if ownsBusiness(id);
+
+      // All current workspace records are owner-only. Staff records are
+      // metadata until they are linked to Firebase Auth UIDs.
+      match /{document=**} {
+        allow read, write: if ownsBusiness(id);
+      }
     }
   }
 }
