@@ -2,23 +2,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function sameBusiness(businessId) {
-      return signedIn() && request.auth.token.businessId == businessId;
-    }
+    function businessId() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.businessId; }
+    function sameBusiness(id) { return signedIn() && businessId() == id; }
 
-    match /businesses/{businessId} {
-      allow read: if sameBusiness(businessId);
+    match /businesses/{id} {
+      allow read: if sameBusiness(id);
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if sameBusiness(businessId);
+      allow update: if sameBusiness(id);
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
-
-      match /{collection}/{document} {
-        allow read, write: if sameBusiness(businessId);
-      }
+      match /{collection}/{document} { allow read, write: if sameBusiness(id); }
     }
-
     match /users/{uid} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read, create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if false;
     }
   }
 }
